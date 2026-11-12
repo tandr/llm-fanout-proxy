@@ -1,0 +1,8 @@
+.pnmp-store/
+.idea/
+/tmp/
+.build/
+**/bin/
+**/obj/
+/fanout
+/fanout.yaml
