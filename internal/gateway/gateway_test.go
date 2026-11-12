@@ -30,6 +30,7 @@ func setup(t *testing.T, native, provider http.HandlerFunc, protocol string) (*G
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = g.Close() })
 	return g, n, p
 }
 func request(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {

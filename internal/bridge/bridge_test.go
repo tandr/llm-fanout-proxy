@@ -29,6 +29,7 @@ func bridgeFor(t *testing.T, upstream http.HandlerFunc) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(h.Close)
 	return h
 }
 func call(t *testing.T, h http.Handler, request obj) *httptest.ResponseRecorder {

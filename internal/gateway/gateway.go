@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -12,8 +13,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"llm-fanout-proxy/internal/bridge"
 )
 
@@ -27,12 +30,17 @@ type Gateway struct {
 	native    *httputil.ReverseProxy
 	providers map[string]*upstream
 	client    *http.Client
+	history   *bridge.History
+	wsMu      sync.Mutex
+	sockets   map[*websocket.Conn]struct{}
+	closed    bool
 }
 type upstream struct {
-	config  Provider
-	key     string
-	base    *url.URL
-	handler http.Handler
+	config    Provider
+	key       string
+	base      *url.URL
+	handler   http.Handler
+	websocket func(context.Context, *websocket.Conn, []byte)
 }
 
 func New(cfg Config) (*Gateway, error) {
@@ -47,7 +55,7 @@ func New(cfg Config) (*Gateway, error) {
 	transport.DisableCompression = true
 	transport.ResponseHeaderTimeout = 2 * time.Minute
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	g := &Gateway{config: cfg, key: key, providers: map[string]*upstream{}, client: client}
+	g := &Gateway{config: cfg, key: key, providers: map[string]*upstream{}, client: client, history: bridge.NewHistory(), sockets: make(map[*websocket.Conn]struct{})}
 	base, _ := parseBase(cfg.Native.BaseURL)
 	g.native = proxy(base, codexPath, "", false, transport)
 	for _, p := range cfg.Providers {
@@ -61,11 +69,12 @@ func New(cfg Config) (*Gateway, error) {
 		u, _ := parseBase(p.BaseURL)
 		up := &upstream{config: p, key: pk, base: u}
 		if p.Protocol == "chat_completions" {
-			h, err := bridge.New(bridge.Config{BaseURL: p.BaseURL, APIKey: pk, ModelPrefix: p.Prefix}, client)
+			h, err := bridge.New(bridge.Config{BaseURL: p.BaseURL, APIKey: pk, ModelPrefix: p.Prefix, History: g.history}, client)
 			if err != nil {
 				return nil, fmt.Errorf("provider %s: %w", p.Prefix, err)
 			}
 			up.handler = h
+			up.websocket = h.ServeWebSocket
 		} else {
 			up.handler = proxy(u, codexPath, pk, true, transport)
 		}
@@ -138,6 +147,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == codexPath+"/models" && r.Method == http.MethodGet {
 		g.catalog(w, r)
+		return
+	}
+	if r.URL.Path == codexPath+"/responses" && r.Method == http.MethodGet && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		g.serveWebSocket(w, r)
 		return
 	}
 	if g.config.ExternalOnly && (r.URL.Path != codexPath+"/responses" || r.Method != http.MethodPost) {

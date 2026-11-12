@@ -41,6 +41,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	defer handler.Close()
 	if *check {
 		fmt.Println("configuration valid")
 		return nil
@@ -59,6 +60,7 @@ func run() error {
 		return nil
 	case <-ctx.Done():
 	}
+	_ = handler.Close()
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdown); err != nil {

@@ -14,12 +14,21 @@ import (
 type eventWriter struct {
 	w        http.ResponseWriter
 	sequence int
+	emit     func(string, obj) error
+	complete func(obj)
+	started  bool
 }
 
 func (e *eventWriter) send(kind string, data obj) error {
 	data["type"] = kind
 	data["sequence_number"] = e.sequence
 	e.sequence++
+	if e.emit != nil {
+		return e.emit(kind, data)
+	}
+	if (kind == "response.completed" || kind == "response.incomplete") && e.complete != nil {
+		e.complete(object(data["response"]))
+	}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -260,13 +269,21 @@ func (s *streamState) complete() error {
 	}
 	return s.events.send("response."+status, obj{"response": responseObject(s.id, s.r.model, status, s.created, output, s.usage, incomplete)})
 }
-func serveStream(w http.ResponseWriter, body io.Reader, r *convertedRequest) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	s := &streamState{r: r, events: &eventWriter{w: w}, id: newID("resp_"), created: time.Now().Unix(), calls: map[int]*streamedItem{}}
-	for _, kind := range []string{"response.created", "response.in_progress"} {
-		if err := s.events.send(kind, obj{"response": responseObject(s.id, r.model, "in_progress", s.created, []any{}, nil, nil)}); err != nil {
-			return
+func serveStream(body io.Reader, r *convertedRequest, events *eventWriter) {
+	if events.w != nil {
+		events.w.Header().Set("Content-Type", "text/event-stream")
+		events.w.Header().Set("Cache-Control", "no-cache")
+	}
+	id, created := r.id, r.created
+	if id == "" {
+		id, created = newID("resp_"), time.Now().Unix()
+	}
+	s := &streamState{r: r, events: events, id: id, created: created, calls: map[int]*streamedItem{}}
+	if !events.started {
+		for _, kind := range []string{"response.created", "response.in_progress"} {
+			if err := s.events.send(kind, obj{"response": responseObject(s.id, r.model, "in_progress", s.created, []any{}, nil, nil)}); err != nil {
+				return
+			}
 		}
 	}
 	fail := func(err error) {
