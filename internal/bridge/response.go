@@ -165,5 +165,9 @@ func convertResponse(data []byte, r *convertedRequest) (obj, error) {
 	if *choice.FinishReason == "tool_calls" && len(m.ToolCalls) == 0 {
 		return nil, fmt.Errorf("upstream tool finish has no calls")
 	}
-	return responseObject(newID("resp_"), r.model, status, time.Now().Unix(), output, chat.Usage, incomplete), nil
+	id, created := r.id, r.created
+	if id == "" {
+		id, created = newID("resp_"), time.Now().Unix()
+	}
+	return responseObject(id, r.model, status, created, output, chat.Usage, incomplete), nil
 }

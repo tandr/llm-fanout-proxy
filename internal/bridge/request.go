@@ -8,10 +8,13 @@ import (
 )
 
 type convertedRequest struct {
-	chat   obj
-	model  string
-	stream bool
-	tools  *toolSet
+	chat    obj
+	model   string
+	stream  bool
+	tools   *toolSet
+	id      string
+	created int64
+	save    func(obj)
 }
 
 func convertRequest(r obj, prefix string) (*convertedRequest, error) {
@@ -31,7 +34,7 @@ func convertRequest(r obj, prefix string) (*convertedRequest, error) {
 		}
 	}
 	if v, ok := r["store"]; ok && v != nil && v != false {
-		return nil, fmt.Errorf("store:true is unsupported by the stateless chat adapter")
+		return nil, fmt.Errorf("store:true persistence is unsupported by the chat adapter")
 	}
 	if v := r["background"]; v != nil && v != false {
 		return nil, fmt.Errorf("background mode is unsupported")
@@ -161,7 +164,7 @@ func convertRequest(r obj, prefix string) (*convertedRequest, error) {
 	if stream {
 		chat["stream_options"] = obj{"include_usage": true}
 	}
-	return &convertedRequest{chat, model, stream, tools}, nil
+	return &convertedRequest{chat: chat, model: model, stream: stream, tools: tools}, nil
 }
 
 func convertInput(input []any, tools *toolSet) ([]any, error) {
