@@ -74,9 +74,9 @@ that file mode 0600.
 The launcher starts Go directly with `-listen 127.0.0.1:PORT -external-only`, retaining
 its existing readiness and process-lifetime checks. This mode discovers only the
 configured external providers and rejects native OpenAI models and endpoints.
-Select it with `codex --fanout`; it has a separate `fanout` provider ID and
-`fanout.sock` control socket. `codex --litellm` keeps its existing LiteLLM route,
-configuration, and runtime. Normal `codex` and `codex --pure` continue using the
+Select it with `codexx --fanout`; it has a separate `fanout` provider ID and
+`fanout.sock` control socket. `codexx --litellm` keeps its existing LiteLLM route,
+configuration, and runtime. Normal `codexx` and `codexx --openai` continue using the
 native route. Existing profiles and running servers are unchanged.
 
 ## Translation boundaries
