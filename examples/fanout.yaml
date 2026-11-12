@@ -1,0 +1,25 @@
+listen: 127.0.0.1:8765
+api_key_env: FANOUT_API_KEY
+
+native:
+  base_url: https://chatgpt.com/backend-api/codex
+
+providers:
+  - prefix: lithos
+    base_url: https://api.lithosai.cloud/v1
+    api_key_env: LITHOS_API_KEY
+    protocol: chat_completions
+    # Discovery stays dynamic; these add metadata to matching upstream IDs.
+    # The first matching pattern wins, so put specific patterns first.
+    model_overrides:
+      - pattern: deepseek-ai/DeepSeek-V4.1-Flash*
+        context_window: 1048576
+        reasoning_levels: [none, low, medium, high, xhigh, max]
+      - pattern: zai-org/GLM-5.3-Flash*
+        context_window: 272000
+        reasoning_levels: [low, medium, high, xhigh, max]
+      - pattern: zai-org/GLM-5.3*
+        context_window: 1048576
+        reasoning_levels: [low, medium, high, xhigh, max]
+      - pattern: moonshotai/Kimi-K3*
+        context_window: 1048576
