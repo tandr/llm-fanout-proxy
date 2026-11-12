@@ -15,10 +15,11 @@ import (
 )
 
 type Config struct {
-	Listen    string       `yaml:"listen"`
-	APIKeyEnv string       `yaml:"api_key_env"`
-	Native    NativeConfig `yaml:"native"`
-	Providers []Provider   `yaml:"providers"`
+	Listen       string       `yaml:"listen"`
+	APIKeyEnv    string       `yaml:"api_key_env"`
+	Native       NativeConfig `yaml:"native"`
+	Providers    []Provider   `yaml:"providers"`
+	ExternalOnly bool         `yaml:"-"`
 }
 type NativeConfig struct {
 	BaseURL string `yaml:"base_url"`
@@ -93,7 +94,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %s api_key_env must be an environment variable name", p.Prefix)
 		}
 		switch p.Protocol {
-		case "responses", "responses_adapter", "chat_completions":
+		case "responses", "chat_completions":
 		default:
 			return fmt.Errorf("provider %s has unsupported protocol %q", p.Prefix, p.Protocol)
 		}

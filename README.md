@@ -36,8 +36,6 @@ Provider protocols:
 
 - `chat_completions`: translate Responses requests and output in Go.
 - `responses`: forward to a native Responses endpoint.
-- `responses_adapter`: forward already-prefixed model names to an existing adapter,
-  allowing a staged migration from LiteLLM.
 
 Model catalogs are fetched on demand and merged with the native Codex catalog. Native
 records and instructions are retained. `model_overrides` adds verified context windows
@@ -64,6 +62,22 @@ Select with `-c 'model_provider="fanout"'` for a new session. Existing sessions 
 bound to their original provider ID; replacing that provider's endpoint requires
 an explicit configuration change. Building this repository does not change the
 installed launcher, start a daemon, or activate the gateway.
+
+For the managed local launcher, install with
+`go build -o ~/.local/bin/llm-fanout-proxy ./cmd/fanout` and put the YAML configuration
+at `~/.config/fanout.yaml`. Set its `api_key_env` to `CODEX_LITELLM_API_KEY`; the
+launcher generates that local key for each launch. Provider credentials come from
+the environment; the shell launcher also sources `~/.config/fanout.env` when present.
+Use ordinary shell exports there, such as `export LITHOS_API_KEY='...'`, and keep
+that file mode 0600.
+
+The launcher starts Go directly with `-listen 127.0.0.1:PORT -external-only`, retaining
+its existing readiness and process-lifetime checks. This mode discovers only the
+configured external providers and rejects native OpenAI models and endpoints.
+The `--litellm` command, provider ID, and socket name remain for saved-session
+compatibility; LiteLLM and its Python runtime are no longer used. Normal `codex`
+and `codex --pure` continue using the native route. Existing running servers keep
+their current executable until explicitly restarted.
 
 ## Translation boundaries
 

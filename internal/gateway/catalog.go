@@ -14,45 +14,49 @@ import (
 func (g *Gateway) catalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	nativeURL, _ := parseBase(g.config.Native.BaseURL)
-	nativeURL.Path = strings.TrimRight(nativeURL.Path, "/") + "/models"
-	nativeURL.RawQuery = r.URL.RawQuery
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nativeURL.String(), nil)
-	if err != nil {
-		writeError(w, 502, "invalid native catalog URL")
-		return
-	}
-	req.Header = r.Header.Clone()
-	req.Header.Del("X-Litellm-Api-Key")
-	req.Header.Del("If-None-Match")
-	req.Header.Del("If-Modified-Since")
-	req.Header.Set("Accept-Encoding", "identity")
-	resp, err := g.client.Do(req)
-	if err != nil {
-		writeError(w, 502, "native catalog request failed")
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		copyHeaders(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-		return
-	}
-	raw, err := readCatalog(resp.Body)
-	if err != nil {
-		writeError(w, 502, "native "+err.Error())
-		return
-	}
-	var catalog map[string]json.RawMessage
-	if json.Unmarshal(raw, &catalog) != nil || catalog == nil {
-		writeError(w, 502, "native model catalog is invalid")
-		return
-	}
-	var rows []json.RawMessage
-	if json.Unmarshal(catalog["models"], &rows) != nil || rows == nil {
-		writeError(w, 502, "native model catalog has no models array")
-		return
+	catalog := map[string]json.RawMessage{}
+	rows := []json.RawMessage{}
+	var headers http.Header
+	if !g.config.ExternalOnly {
+		nativeURL, _ := parseBase(g.config.Native.BaseURL)
+		nativeURL.Path = strings.TrimRight(nativeURL.Path, "/") + "/models"
+		nativeURL.RawQuery = r.URL.RawQuery
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nativeURL.String(), nil)
+		if err != nil {
+			writeError(w, 502, "invalid native catalog URL")
+			return
+		}
+		req.Header = r.Header.Clone()
+		req.Header.Del("X-Litellm-Api-Key")
+		req.Header.Del("If-None-Match")
+		req.Header.Del("If-Modified-Since")
+		req.Header.Set("Accept-Encoding", "identity")
+		resp, err := g.client.Do(req)
+		if err != nil {
+			writeError(w, 502, "native catalog request failed")
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			copyHeaders(w.Header(), resp.Header)
+			w.WriteHeader(resp.StatusCode)
+			_, _ = io.Copy(w, resp.Body)
+			return
+		}
+		headers = resp.Header
+		raw, err := readCatalog(resp.Body)
+		if err != nil {
+			writeError(w, 502, "native "+err.Error())
+			return
+		}
+		if json.Unmarshal(raw, &catalog) != nil || catalog == nil {
+			writeError(w, 502, "native model catalog is invalid")
+			return
+		}
+		if json.Unmarshal(catalog["models"], &rows) != nil || rows == nil {
+			writeError(w, 502, "native model catalog has no models array")
+			return
+		}
 	}
 	seen := map[string]bool{}
 	var instructions json.RawMessage
@@ -122,13 +126,7 @@ func (g *Gateway) catalog(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 502, fmt.Sprintf("provider %s catalog contains empty model ID", cfg.Prefix))
 				return
 			}
-			if cfg.Protocol == "responses_adapter" {
-				if !strings.HasPrefix(id, cfg.Prefix+"/") {
-					continue
-				}
-			} else {
-				id = cfg.Prefix + "/" + id
-			}
+			id = cfg.Prefix + "/" + id
 			if seen[id] {
 				continue
 			}
@@ -146,7 +144,7 @@ func (g *Gateway) catalog(w http.ResponseWriter, r *http.Request) {
 	}
 	catalog["models"], _ = json.Marshal(rows)
 	body, _ := json.Marshal(catalog)
-	copyHeaders(w.Header(), resp.Header)
+	copyHeaders(w.Header(), headers)
 	for _, name := range []string{"Content-Length", "Content-Encoding", "Etag", "Last-Modified", "Content-Md5", "Digest", "Content-Range"} {
 		w.Header().Del(name)
 	}

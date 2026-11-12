@@ -91,46 +91,38 @@ func TestNativeOtherPathAndAlias(t *testing.T) {
 	}
 }
 func TestExternalIsolationAndProtocol(t *testing.T) {
-	for _, protocol := range []string{"responses", "responses_adapter"} {
-		t.Run(protocol, func(t *testing.T) {
-			g, _, _ := setup(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected native call") }, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/responses" || r.URL.RawQuery != "x=1" {
-					t.Errorf("URL %s", r.URL)
-				}
-				for _, name := range []string{"ChatGPT-Account-ID", "X-Litellm-Api-Key", "X-Forwarded-For", "User-Agent", "Cookie", "Origin"} {
-					if r.Header.Get(name) != "" && !(name == "User-Agent" && r.Header.Get(name) == "Go-http-client/1.1") {
-						t.Errorf("leaked %s", name)
-					}
-				}
-				if r.Header.Get("Authorization") != "Bearer provider-secret" {
-					t.Error("wrong provider auth")
-				}
-				var body map[string]any
-				_ = json.NewDecoder(r.Body).Decode(&body)
-				want := "test"
-				if protocol == "responses_adapter" {
-					want = "vendor/test"
-				}
-				if body["model"] != want {
-					t.Errorf("model %v", body["model"])
-				}
-				w.WriteHeader(429)
-				_, _ = io.WriteString(w, "rate limited")
-			}, protocol)
-			r := httptest.NewRequest("POST", codexPath+"/responses?x=1", strings.NewReader(`{"model":"vendor/test"}`))
-			r.Header.Set("X-Litellm-Api-Key", "gateway-secret")
-			r.Header.Set("Authorization", "Bearer native-secret")
-			r.Header.Set("ChatGPT-Account-ID", "private")
-			r.Header.Set("Cookie", "private")
-			r.Header.Set("X-Forwarded-For", "private")
-			r.Header.Set("Origin", "private")
-			r.Header.Set("User-Agent", "private")
-			w := httptest.NewRecorder()
-			g.ServeHTTP(w, r)
-			if w.Code != 429 || w.Body.String() != "rate limited" {
-				t.Fatalf("%d %s", w.Code, w.Body.String())
+	g, _, _ := setup(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected native call") }, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" || r.URL.RawQuery != "x=1" {
+			t.Errorf("URL %s", r.URL)
+		}
+		for _, name := range []string{"ChatGPT-Account-ID", "X-Litellm-Api-Key", "X-Forwarded-For", "User-Agent", "Cookie", "Origin"} {
+			if r.Header.Get(name) != "" && !(name == "User-Agent" && r.Header.Get(name) == "Go-http-client/1.1") {
+				t.Errorf("leaked %s", name)
 			}
-		})
+		}
+		if r.Header.Get("Authorization") != "Bearer provider-secret" {
+			t.Error("wrong provider auth")
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["model"] != "test" {
+			t.Errorf("model %v", body["model"])
+		}
+		w.WriteHeader(429)
+		_, _ = io.WriteString(w, "rate limited")
+	}, "responses")
+	r := httptest.NewRequest("POST", codexPath+"/responses?x=1", strings.NewReader(`{"model":"vendor/test"}`))
+	r.Header.Set("X-Litellm-Api-Key", "gateway-secret")
+	r.Header.Set("Authorization", "Bearer native-secret")
+	r.Header.Set("ChatGPT-Account-ID", "private")
+	r.Header.Set("Cookie", "private")
+	r.Header.Set("X-Forwarded-For", "private")
+	r.Header.Set("Origin", "private")
+	r.Header.Set("User-Agent", "private")
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, r)
+	if w.Code != 429 || w.Body.String() != "rate limited" {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
 func TestAuthenticationAndInvalidRoutes(t *testing.T) {
@@ -166,6 +158,39 @@ func TestAuthenticationAndInvalidRoutes(t *testing.T) {
 		if w.Code != 200 {
 			t.Error(w.Code)
 		}
+	}
+}
+func TestExternalOnly(t *testing.T) {
+	g, _, _ := setup(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("external route contacted native upstream")
+	}, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer provider-secret" || r.Header.Get("ChatGPT-Account-ID") != "" {
+			t.Error("provider credentials were not isolated")
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"test"}]}`)
+		} else {
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}, "responses")
+	g.config.ExternalOnly = true
+	w := request(t, g, "GET", codexPath+"/models", "")
+	var catalog struct {
+		Models []struct{ Slug string } `json:"models"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil || w.Code != 200 || len(catalog.Models) != 1 || catalog.Models[0].Slug != "vendor/test" {
+		t.Fatalf("external catalog: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(t, g, "POST", codexPath+"/responses", `{"model":"vendor/test"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("external response: %d %s", w.Code, w.Body.String())
+	}
+	for _, model := range []string{"gpt-test", "chatgpt/gpt-test", "unknown/test"} {
+		if w := request(t, g, "POST", codexPath+"/responses", `{"model":"`+model+`"}`); w.Code != 400 {
+			t.Fatalf("accepted model %s: %d", model, w.Code)
+		}
+	}
+	if w := request(t, g, "POST", codexPath+"/responses/compact", `{}`); w.Code != 400 {
+		t.Fatalf("accepted native endpoint: %d", w.Code)
 	}
 }
 func TestCatalogMergeAndDiscovery(t *testing.T) {

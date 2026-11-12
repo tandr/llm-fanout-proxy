@@ -140,6 +140,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.catalog(w, r)
 		return
 	}
+	if g.config.ExternalOnly && (r.URL.Path != codexPath+"/responses" || r.Method != http.MethodPost) {
+		writeError(w, 400, "external gateway supports only configured provider models")
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, requestLimit))
 	if err != nil {
 		var sizeErr *http.MaxBytesError
@@ -177,6 +181,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.ContentLength = int64(len(body))
 			r.Header = providerHeaders(r.Header, up.key)
 			up.handler.ServeHTTP(w, r)
+			return
+		}
+		if g.config.ExternalOnly {
+			writeError(w, 400, "use the native Codex route for OpenAI models")
 			return
 		}
 		if hasPrefix {

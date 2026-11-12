@@ -22,6 +22,8 @@ func main() {
 }
 func run() error {
 	path := flag.String("config", "", "YAML configuration file")
+	listen := flag.String("listen", "", "override the loopback listen address")
+	externalOnly := flag.Bool("external-only", false, "serve only configured external providers")
 	check := flag.Bool("check", false, "validate configuration and required environment variables, then exit")
 	flag.Parse()
 	if *path == "" {
@@ -31,6 +33,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if *listen != "" {
+		cfg.Listen = *listen
+	}
+	cfg.ExternalOnly = *externalOnly
 	handler, err := gateway.New(cfg)
 	if err != nil {
 		return err
