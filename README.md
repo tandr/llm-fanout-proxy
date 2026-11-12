@@ -131,6 +131,8 @@ Routing prefixes are removed from each model. A connection cannot change its ups
 open another connection when switching providers. External handshakes use only provider
 credentials and allowlisted protocol headers; native handshakes retain native account
 credentials. Native Responses state remains managed by that upstream.
+Valid upstream WebSocket close codes are forwarded with a bounded generic reason,
+including the message-too-large code Codex uses for HTTP fallback.
 
 Request and response bodies, credentials, and prompts are not logged.
 

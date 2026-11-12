@@ -164,7 +164,17 @@ func (g *Gateway) relayWebSocket(r *http.Request, downstream *websocket.Conn, ro
 		defer cancel()
 		for {
 			data, err := wsRead(ctx, up)
-			if err != nil || wsWrite(ctx, downstream, data) != nil {
+			if err != nil {
+				code := websocket.CloseStatus(err)
+				switch {
+				case code >= websocket.StatusNormalClosure && code <= websocket.StatusUnsupportedData,
+					code >= websocket.StatusInvalidFramePayloadData && code <= websocket.StatusBadGateway,
+					code >= 3000 && code <= 4999:
+					_ = downstream.Close(code, "upstream WebSocket closed")
+				}
+				return
+			}
+			if wsWrite(ctx, downstream, data) != nil {
 				return
 			}
 		}
