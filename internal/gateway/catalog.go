@@ -178,6 +178,8 @@ func copyHeaders(dst, src http.Header) {
 }
 func catalogRow(id string, cfg Provider) map[string]any {
 	row := map[string]any{"slug": id, "display_name": id, "description": nil, "supported_reasoning_levels": []any{}, "shell_type": "unified_exec", "visibility": "list", "supported_in_api": true, "priority": 100, "availability_nux": nil, "upgrade": nil, "support_verbosity": false, "default_verbosity": nil, "apply_patch_tool_type": "freeform", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000}, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "supports_reasoning_summary_parameter": false, "supports_search_tool": false, "use_responses_lite": false, "multi_agent_version": "v2"}
+	// Codex requires an instruction template even without a native catalog to inherit.
+	row["base_instructions"] = "You are a coding assistant. Follow the user's instructions and use the available tools to complete their request."
 	rawID := strings.TrimPrefix(id, cfg.Prefix+"/")
 	// First matching override wins, allowing specific models before family patterns.
 	for _, override := range cfg.ModelOverrides {

@@ -176,10 +176,16 @@ func TestExternalOnly(t *testing.T) {
 	g.config.ExternalOnly = true
 	w := request(t, g, "GET", codexPath+"/models", "")
 	var catalog struct {
-		Models []struct{ Slug string } `json:"models"`
+		Models []struct {
+			Slug             string
+			BaseInstructions string `json:"base_instructions"`
+		} `json:"models"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil || w.Code != 200 || len(catalog.Models) != 1 || catalog.Models[0].Slug != "vendor/test" {
 		t.Fatalf("external catalog: %d %s", w.Code, w.Body.String())
+	}
+	if catalog.Models[0].BaseInstructions == "" {
+		t.Fatal("external catalog lacks the instructions required by Codex")
 	}
 	if w := request(t, g, "POST", codexPath+"/responses", `{"model":"vendor/test"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("external response: %d %s", w.Code, w.Body.String())
