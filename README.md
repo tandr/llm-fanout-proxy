@@ -101,7 +101,8 @@ discovering a model ID alone does not establish vision or hosted-tool support.
 Client cancellation cancels upstream work. WebSocket `response.create` supports Codex
 prewarm (`generate: false`, no model request) and `response.interrupt` with
 `mode: "discard_partial_items"`. Interruption returns an acknowledgment and an
-`interrupted` incomplete response with no partial output. One request runs at a time
+`interrupted` incomplete response retaining items already delivered as
+`response.output_item.done`; unfinished items are discarded. One request runs at a time
 per chat WebSocket, with at most one queued create. Named `stream_id` multiplexing is
 unsupported by the chat adapter. Connections and messages are bounded (128 concurrent
 WebSockets, 64 MiB per message); compression is disabled. Shutdown closes open sockets.

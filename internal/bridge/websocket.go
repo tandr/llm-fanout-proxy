@@ -14,6 +14,7 @@ type websocketRequest struct {
 	cancel                context.CancelFunc
 	interrupted, terminal bool
 	sequence              int
+	completed             []any
 }
 
 type websocketSession struct {
@@ -54,7 +55,7 @@ func (s *websocketSession) interrupt(message obj) {
 	a.cancel()
 	_ = s.send("response.interrupt.accepted", obj{"response_id": id, "sequence_number": a.sequence})
 	a.sequence++
-	response := responseObject(id, a.r.model, "incomplete", a.r.created, []any{}, nil, obj{"reason": "interrupted"})
+	response := responseObject(id, a.r.model, "incomplete", a.r.created, a.completed, nil, obj{"reason": "interrupted"})
 	a.r.save(response)
 	_ = s.send("response.incomplete", obj{"response": response, "sequence_number": a.sequence})
 	a.sequence++
@@ -81,7 +82,7 @@ func (s *websocketSession) run(h *handler, request obj) {
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
-	a := &websocketRequest{r: r, cancel: cancel}
+	a := &websocketRequest{r: r, cancel: cancel, completed: []any{}}
 	s.mu.Lock()
 	s.active = a
 	s.mu.Unlock()
@@ -107,7 +108,11 @@ func (s *websocketSession) run(h *handler, request obj) {
 		}
 		data["sequence_number"] = a.sequence
 		a.sequence++
-		return s.send(kind, data)
+		err := s.send(kind, data)
+		if err == nil && kind == "response.output_item.done" {
+			a.completed = append(a.completed, data["item"])
+		}
+		return err
 	}
 	for _, kind := range []string{"response.created", "response.in_progress"} {
 		if events.send(kind, obj{"response": responseObject(r.id, r.model, "in_progress", r.created, []any{}, nil, nil)}) != nil {
