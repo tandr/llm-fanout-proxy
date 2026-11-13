@@ -26,10 +26,21 @@ type History struct {
 	now      func() time.Time
 	ttl      time.Duration
 	maxBytes int
+	hits     int
+	misses   int
+	evicted  int
+	oversize int
 }
 
 func NewHistory() *History {
 	return &History{entries: make(map[string]historyEntry), now: time.Now, ttl: historyTTL, maxBytes: historyBytes}
+}
+
+// Stats reports aggregate cache counters; it never includes identifiers or content.
+func (h *History) Stats() map[string]int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return map[string]int{"entries": len(h.entries), "bytes": h.bytes, "hits": h.hits, "misses": h.misses, "evictions": h.evicted, "oversized": h.oversize}
 }
 
 func (h *History) Close() {
@@ -78,19 +89,25 @@ func (h *History) schedule() {
 	})
 }
 
-func (h *History) get(id, model string) ([]any, bool) {
+func (h *History) get(id, model string) (input []any, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	defer func() {
+		if ok {
+			h.hits++
+		} else {
+			h.misses++
+		}
+	}()
 	now := h.now()
 	h.prune(now)
-	entry, ok := h.entries[id]
-	if h.closed || !ok || entry.model != model {
+	entry, found := h.entries[id]
+	if h.closed || !found || entry.model != model {
 		return nil, false
 	}
 	entry.used = now
 	h.entries[id] = entry
 	h.schedule()
-	var input []any
 	if json.Unmarshal(entry.input, &input) != nil {
 		return nil, false
 	}
@@ -102,12 +119,16 @@ func (h *History) put(id, model string, input, output []any) {
 	items = append(items, input...)
 	items = append(items, output...)
 	data, err := json.Marshal(items)
-	if err != nil || len(data) > snapshotBytes || len(data) > h.maxBytes {
+	if err != nil {
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
+		return
+	}
+	if len(data) > snapshotBytes || len(data) > h.maxBytes {
+		h.oversize++
 		return
 	}
 	now := h.now()
@@ -129,6 +150,7 @@ func (h *History) put(id, model string, input, output []any) {
 		}
 		h.bytes -= len(h.entries[oldest].input)
 		delete(h.entries, oldest)
+		h.evicted++
 	}
 	h.entries[id] = historyEntry{model, data, now}
 	h.bytes += len(data)

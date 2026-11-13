@@ -52,6 +52,9 @@ func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 	if _, ok := h.get("closed", "one/model"); ok {
 		t.Fatal("closed cache accepted data")
 	}
+	if s := h.Stats(); s["hits"] != 3 || s["misses"] != 5 || s["evictions"] != 1 || s["oversized"] != 1 {
+		t.Fatalf("unexpected counters: %v", s)
+	}
 }
 
 func TestHistoryRemovesIdleDataWithoutTraffic(t *testing.T) {

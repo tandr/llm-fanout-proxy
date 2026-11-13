@@ -160,6 +160,11 @@ func TestAuthenticationAndInvalidRoutes(t *testing.T) {
 			t.Error(w.Code)
 		}
 	}
+	w = httptest.NewRecorder()
+	g.ServeHTTP(w, httptest.NewRequest("GET", "/stats", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"oversized":0`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
 }
 func TestExternalOnly(t *testing.T) {
 	g, _, _ := setup(t, func(w http.ResponseWriter, r *http.Request) {

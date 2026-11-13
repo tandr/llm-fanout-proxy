@@ -131,6 +131,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "{\"status\":\"ok\"}\n")
 		return
 	}
+	if r.URL.Path == "/stats" && r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(g.history.Stats())
+		return
+	}
 	supplied := token(r.Header.Get("X-Litellm-Api-Key"))
 	if supplied == "" || subtle.ConstantTimeCompare([]byte(supplied), []byte(g.key)) != 1 {
 		writeError(w, 401, "invalid gateway credential")

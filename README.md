@@ -19,7 +19,8 @@ go run ./cmd/fanout -config ./fanout.yaml
 
 Keep credentials in the environment. Configuration contains environment variable names,
 not keys. The file uses a small YAML schema; LiteLLM configuration is not loaded
-directly. The listener defaults to loopback. `/health/readiness` reports readiness.
+directly. The listener defaults to loopback. `/health/readiness` reports readiness;
+`/stats` reports aggregate history-cache counters in JSON.
 
 The gateway accepts the existing Codex paths under `/backend-api/codex` and the
 `x-litellm-api-key` header for local authentication. Native requests retain their
