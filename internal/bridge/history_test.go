@@ -152,6 +152,35 @@ func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 	}
 }
 
+func TestHistoryContinuationAfterParentExpires(t *testing.T) {
+	h := NewHistory()
+	defer h.Close()
+	now := time.Unix(100, 0)
+	h.now = func() time.Time { return now }
+	h.put("parent", "model", "", []any{"question"}, []any{"answer"})
+	h.timer.Stop()
+	// Model work outlasts the parent TTL before the expiry callback runs.
+	now = now.Add(historyTTL)
+	want := []any{"question", "answer", "followup", "next answer"}
+	h.put("child", "model", "parent", want[:3], want[3:])
+	got, ok := h.get("child", "model")
+	encoded, _ := json.Marshal(want)
+	actual, _ := json.Marshal(got)
+	if !ok || string(actual) != string(encoded) {
+		t.Fatalf("continuation lost history: found=%v got=%s want=%s", ok, actual, encoded)
+	}
+	if s := h.Stats(); s["entries"] != 1 || s["bytes"] != len(encoded)-2 {
+		t.Fatalf("incorrect accounting after parent expiry: %v", s)
+	}
+	now = now.Add(historyTTL)
+	if _, ok := h.get("child", "model"); ok {
+		t.Fatal("expired continuation survived")
+	}
+	if s := h.Stats(); s["entries"] != 0 || s["bytes"] != 0 {
+		t.Fatalf("incorrect accounting after continuation expiry: %v", s)
+	}
+}
+
 func TestHistoryRemovesIdleDataWithoutTraffic(t *testing.T) {
 	h := NewHistory()
 	defer h.Close()

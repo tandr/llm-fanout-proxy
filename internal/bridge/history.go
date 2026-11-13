@@ -160,6 +160,8 @@ func (h *History) put(id, model, parent string, input, output []any) {
 	if h.closed {
 		return
 	}
+	now := h.now()
+	h.prune(now)
 	conv := &conversation{model: model}
 	delta := input
 	if parent != "" {
@@ -186,8 +188,6 @@ func (h *History) put(id, model, parent string, input, output []any) {
 		h.oversize++
 		return
 	}
-	now := h.now()
-	h.prune(now)
 	h.drop(id)
 	if prev > 0 && len(data) > 0 {
 		conv.data = append(conv.data, ',')
