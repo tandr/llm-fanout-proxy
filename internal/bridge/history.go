@@ -10,9 +10,18 @@ const historyTTL = time.Hour
 const historyBytes = 1 << 30
 const snapshotBytes = 16 << 20
 
-type historyEntry struct {
+// conversation is an append-only run of comma-separated JSON items; every snapshot
+// is a prefix of it, so a linear conversation stores each item once.
+type conversation struct {
 	model string
-	input []byte
+	data  []byte
+	refs  int
+}
+
+type historyEntry struct {
+	conv  *conversation
+	end   int // snapshot is conv.data[:end]
+	count int // items in the snapshot
 	used  time.Time
 }
 
@@ -54,11 +63,24 @@ func (h *History) Close() {
 	h.bytes = 0
 }
 
+// drop removes one snapshot; the shared buffer is released with its last reference.
+func (h *History) drop(id string) {
+	entry, ok := h.entries[id]
+	if !ok {
+		return
+	}
+	delete(h.entries, id)
+	entry.conv.refs--
+	if entry.conv.refs == 0 {
+		h.bytes -= len(entry.conv.data)
+		entry.conv.data = nil
+	}
+}
+
 func (h *History) prune(now time.Time) {
 	for id, entry := range h.entries {
 		if !now.Before(entry.used.Add(h.ttl)) {
-			h.bytes -= len(entry.input)
-			delete(h.entries, id)
+			h.drop(id)
 		}
 	}
 }
@@ -102,42 +124,78 @@ func (h *History) get(id, model string) (input []any, ok bool) {
 	now := h.now()
 	h.prune(now)
 	entry, found := h.entries[id]
-	if h.closed || !found || entry.model != model {
+	if h.closed || !found || entry.conv.model != model {
 		return nil, false
 	}
 	entry.used = now
 	h.entries[id] = entry
 	h.schedule()
-	if json.Unmarshal(entry.input, &input) != nil {
+	data := make([]byte, 0, entry.end+2)
+	data = append(append(append(data, '['), entry.conv.data[:entry.end]...), ']')
+	if json.Unmarshal(data, &input) != nil {
 		return nil, false
 	}
 	return input, true
 }
 
-func (h *History) put(id, model string, input, output []any) {
-	items := make([]any, 0, len(input)+len(output))
-	items = append(items, input...)
-	items = append(items, output...)
-	data, err := json.Marshal(items)
-	if err != nil {
-		return
+func appendItems(dst []byte, items []any) ([]byte, bool) {
+	for _, item := range items {
+		data, err := json.Marshal(item)
+		if err != nil {
+			return dst, false
+		}
+		if len(dst) > 0 {
+			dst = append(dst, ',')
+		}
+		dst = append(dst, data...)
 	}
+	return dst, true
+}
+
+// put stores a snapshot; input is the merged conversation, so only the items past
+// the parent are appended to a shared buffer.
+func (h *History) put(id, model, parent string, input, output []any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return
 	}
-	if len(data) > snapshotBytes || len(data) > h.maxBytes {
+	conv := &conversation{model: model}
+	delta := input
+	if parent != "" {
+		if entry, ok := h.entries[parent]; ok && entry.conv.model == model && entry.count <= len(input) {
+			conv = entry.conv
+			delta = input[entry.count:]
+		}
+	}
+	count := len(input) + len(output)
+	data, ok := appendItems(nil, delta)
+	if ok {
+		data, ok = appendItems(data, output)
+	}
+	if !ok {
+		return
+	}
+	prev := len(conv.data)
+	added := len(data)
+	if prev > 0 && added > 0 {
+		added++
+	}
+	if prev+added > snapshotBytes || prev+added > h.maxBytes {
 		h.oversize++
 		return
 	}
 	now := h.now()
 	h.prune(now)
-	if old, ok := h.entries[id]; ok {
-		h.bytes -= len(old.input)
-		delete(h.entries, id)
+	h.drop(id)
+	if prev > 0 && len(data) > 0 {
+		conv.data = append(conv.data, ',')
 	}
-	for h.bytes+len(data) > h.maxBytes {
+	conv.data = append(conv.data, data...)
+	conv.refs++
+	h.bytes += added
+	h.entries[id] = historyEntry{conv: conv, end: len(conv.data), count: count, used: now}
+	for h.bytes > h.maxBytes {
 		var oldest string
 		var used time.Time
 		for candidate, entry := range h.entries {
@@ -146,14 +204,11 @@ func (h *History) put(id, model string, input, output []any) {
 			}
 		}
 		if oldest == "" {
-			return
+			break
 		}
-		h.bytes -= len(h.entries[oldest].input)
-		delete(h.entries, oldest)
+		h.drop(oldest)
 		h.evicted++
 	}
-	h.entries[id] = historyEntry{model, data, now}
-	h.bytes += len(data)
 	h.schedule()
 }
 
@@ -187,6 +242,7 @@ func (h *handler) prepare(request obj) (*convertedRequest, error) {
 	if !ok {
 		return nil, invalid("input must be a string or array")
 	}
+	var parentID string
 	if raw := request["previous_response_id"]; raw != nil {
 		id, ok := raw.(string)
 		if !ok || id == "" {
@@ -196,6 +252,7 @@ func (h *handler) prepare(request obj) (*convertedRequest, error) {
 		if !found {
 			return nil, missingPrevious()
 		}
+		parentID = id
 		input = append(parent, input...)
 	}
 	resolved := make(obj, len(request))
@@ -211,7 +268,7 @@ func (h *handler) prepare(request obj) (*convertedRequest, error) {
 	converted.id = newID("resp_")
 	converted.created = time.Now().Unix()
 	converted.save = func(response obj) {
-		h.config.History.put(stringValue(response["id"]), model, input, array(response["output"]))
+		h.config.History.put(stringValue(response["id"]), model, parentID, input, array(response["output"]))
 	}
 	return converted, nil
 }

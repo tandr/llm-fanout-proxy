@@ -9,14 +9,44 @@ import (
 	"time"
 )
 
+func TestHistorySharesConversationPrefix(t *testing.T) {
+	h := NewHistory()
+	defer h.Close()
+	item := func(s string) any { return obj{"content": s} }
+	h.put("r1", "m", "", []any{item("u1")}, []any{item("a1")})
+	h.put("r2", "m", "r1", []any{item("u1"), item("a1"), item("u2")}, []any{item("a2")})
+	h.put("r3", "m", "r2", []any{item("u1"), item("a1"), item("u2"), item("a2"), item("u3")}, []any{item("a3")})
+	got, ok := h.get("r3", "m")
+	if !ok {
+		t.Fatal("missing snapshot")
+	}
+	var order []string
+	for _, value := range got {
+		order = append(order, stringValue(object(value)["content"]))
+	}
+	if strings.Join(order, ",") != "u1,a1,u2,a2,u3,a3" {
+		t.Fatalf("snapshot order: %v", order)
+	}
+	// Six unique items are retained once with five commas, not twelve items across three snapshots.
+	unique := 6 * len(`{"content":"ux"}`)
+	if s := h.Stats(); s["entries"] != 3 || s["bytes"] != unique+5 {
+		t.Fatalf("conversation was not shared: %v", s)
+	}
+	// A parent that is no longer resident must fall back to the merged input, not a truncated snapshot.
+	h.put("r9", "m", "gone", []any{item("x1"), item("x2")}, nil)
+	if got, ok := h.get("r9", "m"); !ok || len(got) != 2 {
+		t.Fatalf("fallback snapshot: %v %v", got, ok)
+	}
+}
+
 func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 	h := NewHistory()
 	defer h.Close()
 	now := time.Unix(100, 0)
 	h.now = func() time.Time { return now }
-	h.put("a", "one/model", []any{obj{"role": "user", "content": "a"}}, nil)
+	h.put("a", "one/model", "", []any{obj{"role": "user", "content": "a"}}, nil)
 	now = now.Add(30 * time.Minute)
-	h.put("b", "one/model", nil, []any{obj{"role": "assistant", "content": "b"}})
+	h.put("b", "one/model", "", nil, []any{obj{"role": "assistant", "content": "b"}})
 	if _, ok := h.get("a", "two/model"); ok {
 		t.Fatal("cross-provider history exposed")
 	}
@@ -38,17 +68,17 @@ func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 		t.Fatal("expired history survived")
 	}
 	h.maxBytes = 60
-	h.put("d", "one/model", []any{obj{"content": strings.Repeat("d", 40)}}, nil)
-	h.put("e", "one/model", []any{obj{"content": strings.Repeat("e", 40)}}, nil)
+	h.put("d", "one/model", "", []any{obj{"content": strings.Repeat("d", 40)}}, nil)
+	h.put("e", "one/model", "", []any{obj{"content": strings.Repeat("e", 40)}}, nil)
 	if _, ok := h.get("d", "one/model"); ok {
 		t.Fatal("byte limit did not evict")
 	}
-	h.put("huge", "one/model", []any{strings.Repeat("x", 100)}, nil)
+	h.put("huge", "one/model", "", []any{strings.Repeat("x", 100)}, nil)
 	if _, ok := h.get("huge", "one/model"); ok {
 		t.Fatal("oversized snapshot cached")
 	}
 	h.Close()
-	h.put("closed", "one/model", nil, nil)
+	h.put("closed", "one/model", "", nil, nil)
 	if _, ok := h.get("closed", "one/model"); ok {
 		t.Fatal("closed cache accepted data")
 	}
@@ -61,7 +91,7 @@ func TestHistoryRemovesIdleDataWithoutTraffic(t *testing.T) {
 	h := NewHistory()
 	defer h.Close()
 	h.ttl = 10 * time.Millisecond
-	h.put("idle", "model", []any{"private"}, nil)
+	h.put("idle", "model", "", []any{"private"}, nil)
 	time.Sleep(100 * time.Millisecond)
 	h.mu.Lock()
 	defer h.mu.Unlock()
