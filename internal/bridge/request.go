@@ -173,9 +173,17 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 	pendingImages := []any{}
 	calls := map[string]bool{}
 	answered := map[string]bool{}
+	pendingMessages := []any{}
+	appendMessage := func(message obj) {
+		if len(calls) != len(answered) {
+			pendingMessages = append(pendingMessages, message)
+		} else {
+			messages = append(messages, message)
+		}
+	}
 	flushImages := func() {
 		if len(pendingImages) > 0 {
-			messages = append(messages, obj{"role": "user", "content": pendingImages})
+			appendMessage(obj{"role": "user", "content": pendingImages})
 			pendingImages = nil
 		}
 	}
@@ -211,23 +219,20 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 			if role == "assistant" {
 				attachReasoning(message)
 			}
-			messages = append(messages, message)
+			appendMessage(message)
 		case "agent_message":
 			content, err := convertContent(item["content"])
 			if err != nil {
 				return nil, err
 			}
 			prefix := obj{"type": "text", "text": "Agent message from " + stringValue(item["author"]) + " to " + stringValue(item["recipient"]) + ":"}
-			messages = append(messages, obj{"role": "user", "content": append([]any{prefix}, content...)})
+			appendMessage(obj{"role": "user", "content": append([]any{prefix}, content...)})
 		case "reasoning":
 			text, err := reasoningText(item)
 			if err != nil {
 				return nil, err
 			}
 			reasoning += text
-			if len(messages) > 0 && object(messages[len(messages)-1])["role"] == "assistant" {
-				attachReasoning(object(messages[len(messages)-1]))
-			}
 		case "function_call", "custom_tool_call":
 			id := stringValue(item["call_id"])
 			if id == "" || calls[id] {
@@ -290,6 +295,10 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 				texts = append(texts, "[Images follow in a user message, labeled with this tool call ID.]")
 			}
 			messages = append(messages, obj{"role": "tool", "tool_call_id": id, "content": strings.Join(texts, "\n")})
+			if len(calls) == len(answered) {
+				messages = append(messages, pendingMessages...)
+				pendingMessages = nil
+			}
 		case "compaction", "compaction_summary", "context_compaction":
 			return nil, fmt.Errorf("opaque compaction cannot be translated to Chat Completions")
 		default:

@@ -134,6 +134,7 @@ func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 	}
 	h.maxBytes = 60
 	h.put("d", "one/model", "", []any{obj{"content": strings.Repeat("d", 40)}}, nil)
+	now = now.Add(time.Second)
 	h.put("e", "one/model", "", []any{obj{"content": strings.Repeat("e", 40)}}, nil)
 	if _, ok := h.get("d", "one/model"); ok {
 		t.Fatal("byte limit did not evict")
@@ -280,5 +281,84 @@ func TestHTTPIncompleteContinuationAndFailedStream(t *testing.T) {
 	next["previous_response_id"] = failedID
 	if w := call(t, h, next); w.Code != 400 || calls != 3 {
 		t.Fatal("failed response was cached")
+	}
+}
+
+func TestReasoningAcrossContinuation(t *testing.T) {
+	turns := 0
+	h := bridgeFor(t, func(w http.ResponseWriter, r *http.Request) {
+		turns++
+		body := decode(t, r.Body)
+		if turns == 3 {
+			messages := array(body["messages"])
+			first, second := object(messages[1]), object(messages[2])
+			if first["reasoning_content"] != "plan1" || second["reasoning_content"] != "plan2" {
+				t.Errorf("reasoning reassigned between messages: first=%v second=%v", first, second)
+			}
+		}
+		finish := "stop"
+		if turns == 1 {
+			finish = "length"
+		}
+		sendJSON(w, completion(fmt.Sprintf("answer%d", turns), fmt.Sprintf("plan%d", turns), nil, finish))
+	})
+	parent := decode(t, call(t, h, request("question")).Body)
+	child := decode(t, call(t, h, obj{"model": "lithos/example", "previous_response_id": parent["id"]}).Body)
+	third := request("continue")
+	third["previous_response_id"] = child["id"]
+	if w := call(t, h, third); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+}
+
+func TestAgentMessageDuringParallelTools(t *testing.T) {
+	for _, withImage := range []bool{false, true} {
+		t.Run(fmt.Sprintf("image=%v", withImage), func(t *testing.T) {
+			var output any = "first result"
+			if withImage {
+				output = []any{obj{"type": "input_text", "text": "first result"}, obj{"type": "input_image", "image_url": "https://example.com/image.png"}}
+			}
+			input := []any{
+				obj{"type": "function_call", "call_id": "a", "name": "run", "arguments": "{}"},
+				obj{"type": "custom_tool_call", "call_id": "b", "name": "exec", "input": "second command"},
+				obj{"type": "function_call_output", "call_id": "a", "output": output},
+				obj{"type": "agent_message", "author": "worker", "recipient": "root", "content": "worker finished"},
+				obj{"role": "user", "content": "user steering"},
+				obj{"type": "custom_tool_call_output", "call_id": "b", "output": "second result"},
+			}
+			converted, err := convertRequest(request(input), "lithos")
+			if err != nil {
+				t.Fatal(err)
+			}
+			messages := array(converted.chat["messages"])
+			wantCount := 5
+			if withImage {
+				wantCount++
+			}
+			if len(messages) != wantCount {
+				t.Fatalf("lost messages: %v", messages)
+			}
+			if len(array(object(messages[0])["tool_calls"])) != 2 || object(messages[1])["tool_call_id"] != "a" || object(messages[2])["tool_call_id"] != "b" {
+				t.Fatalf("tool results not grouped with calls: %v", messages)
+			}
+			if !strings.Contains(stringValue(object(messages[1])["content"]), "first result") || object(messages[2])["content"] != "second result" {
+				t.Fatalf("lost results: %v", messages)
+			}
+			next := 3
+			if withImage {
+				content := array(object(messages[next])["content"])
+				if len(content) != 2 || object(object(content[1])["image_url"])["url"] != "https://example.com/image.png" {
+					t.Fatalf("lost image: %v", content)
+				}
+				next++
+			}
+			agent := array(object(messages[next])["content"])
+			if len(agent) != 2 || object(agent[0])["text"] != "Agent message from worker to root:" || object(agent[1])["text"] != "worker finished" {
+				t.Fatalf("lost agent message: %v", agent)
+			}
+			if object(array(object(messages[next+1])["content"])[0])["text"] != "user steering" {
+				t.Fatalf("lost steering: %v", messages)
+			}
+		})
 	}
 }
