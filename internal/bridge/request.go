@@ -181,6 +181,12 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 			messages = append(messages, message)
 		}
 	}
+	flushReasoning := func() {
+		if reasoning != "" {
+			appendMessage(obj{"role": "assistant", "content": "", "reasoning_content": reasoning})
+			reasoning = ""
+		}
+	}
 	flushImages := func() {
 		if len(pendingImages) > 0 {
 			appendMessage(obj{"role": "user", "content": pendingImages})
@@ -218,6 +224,8 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 			message := obj{"role": role, "content": content}
 			if role == "assistant" {
 				attachReasoning(message)
+			} else {
+				flushReasoning()
 			}
 			appendMessage(message)
 		case "agent_message":
@@ -225,6 +233,7 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 			if err != nil {
 				return nil, err
 			}
+			flushReasoning()
 			prefix := obj{"type": "text", "text": "Agent message from " + stringValue(item["author"]) + " to " + stringValue(item["recipient"]) + ":"}
 			appendMessage(obj{"role": "user", "content": append([]any{prefix}, content...)})
 		case "reasoning":
@@ -306,13 +315,7 @@ func convertInput(input []any, tools *toolSet) ([]any, error) {
 		}
 	}
 	flushImages()
-	if reasoning != "" {
-		if len(messages) > 0 && object(messages[len(messages)-1])["role"] == "assistant" {
-			attachReasoning(object(messages[len(messages)-1]))
-		} else {
-			return nil, fmt.Errorf("reasoning has no associated assistant turn")
-		}
-	}
+	flushReasoning()
 	for id := range calls {
 		if !answered[id] {
 			return nil, fmt.Errorf("tool call %q has no output in input history", id)

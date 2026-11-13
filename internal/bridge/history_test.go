@@ -362,3 +362,69 @@ func TestAgentMessageDuringParallelTools(t *testing.T) {
 		})
 	}
 }
+
+func TestReasoningOnlyIncompleteContinuation(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, followup := range []string{"none", "user", "agent"} {
+			t.Run(fmt.Sprintf("stream=%v/followup=%s", stream, followup), func(t *testing.T) {
+				calls := 0
+				h := bridgeFor(t, func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					body := decode(t, r.Body)
+					if calls == 1 {
+						if stream {
+							fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"unfinished plan\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n")
+						} else {
+							sendJSON(w, completion(nil, "unfinished plan", nil, "length"))
+						}
+						return
+					}
+					messages := array(body["messages"])
+					want := 2
+					if followup != "none" {
+						want++
+					}
+					if len(messages) != want || object(messages[1])["role"] != "assistant" || object(messages[1])["reasoning_content"] != "unfinished plan" {
+						t.Errorf("reasoning lost or assigned to another turn: %v", messages)
+					}
+					sendJSON(w, completion("answer", "", nil, "stop"))
+				})
+				first := request("question")
+				first["stream"] = stream
+				w := call(t, h, first)
+				if w.Code != 200 {
+					t.Fatal(w.Code, w.Body.String())
+				}
+				var parent obj
+				if stream {
+					for _, line := range strings.Split(w.Body.String(), "\n") {
+						if strings.HasPrefix(line, "data: ") {
+							var event obj
+							if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event) == nil && event["type"] == "response.incomplete" {
+								parent = object(event["response"])
+							}
+						}
+					}
+				} else {
+					parent = decode(t, w.Body)
+				}
+				if parent["status"] != "incomplete" {
+					t.Fatal("missing incomplete response", parent)
+				}
+				next := obj{"model": "lithos/example", "previous_response_id": parent["id"]}
+				switch followup {
+				case "user":
+					next["input"] = "continue"
+				case "agent":
+					next["input"] = []any{obj{"type": "agent_message", "author": "worker", "recipient": "root", "content": "continue"}}
+				}
+				if got := call(t, h, next); got.Code != 200 {
+					t.Fatal(got.Code, got.Body.String())
+				}
+				if calls != 2 {
+					t.Fatalf("continuation did not reach upstream: %d calls", calls)
+				}
+			})
+		}
+	}
+}
