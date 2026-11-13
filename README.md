@@ -65,7 +65,8 @@ an explicit configuration change. HTTP remains supported with `supports_websocke
 Building this repository does not change the installed launcher, start a daemon,
 or activate the gateway.
 
-For the managed local launcher, install with
+`codex` is the standard Codex CLI; `codexx` is our managed local launcher.
+For `codexx`, install with
 `go build -o ~/.local/bin/llm-fanout-proxy ./cmd/fanout` and put the YAML configuration
 at `~/.config/fanout.yaml`. Set its `api_key_env` to `FANOUT_API_KEY`; the
 launcher generates that local key for each launch. Provider credentials come from
