@@ -47,7 +47,7 @@ patterns match upstream IDs without the routing prefix. Put specific patterns fi
 
 Run the gateway as a separate process, then point a Codex provider at
 `http://127.0.0.1:8765/backend-api/codex`, with `wire_api = "responses"`,
-`supports_websockets = true`, and the gateway header supplied through the environment:
+`supports_websockets = false`, and the gateway header supplied through the environment:
 
 ```toml
 [model_providers.fanout]
@@ -55,13 +55,14 @@ name = "Local Go gateway"
 base_url = "http://127.0.0.1:8765/backend-api/codex"
 wire_api = "responses"
 requires_openai_auth = true
-supports_websockets = true
+supports_websockets = false
 env_http_headers = { "x-litellm-api-key" = "FANOUT_API_KEY" }
 ```
 
 Select with `-c 'model_provider="fanout"'` for a new session. Existing sessions can be
 bound to their original provider ID; replacing that provider's endpoint requires
-an explicit configuration change. HTTP remains supported with `supports_websockets = false`.
+an explicit configuration change. HTTP routes each request by model; WebSocket
+connections remain pinned to a single upstream.
 Building this repository does not change the installed launcher, start a daemon,
 or activate the gateway.
 
@@ -74,16 +75,15 @@ the environment; the shell launcher also sources `~/.config/fanout.env` when pre
 Use ordinary shell exports there, such as `export LITHOS_API_KEY='...'`, and keep
 that file mode 0600.
 
-The launcher starts Go directly with `--listen 127.0.0.1:PORT --external-only`, retaining
-its existing readiness and process-lifetime checks. This mode discovers only the
-configured external providers and rejects native OpenAI models and endpoints.
+The managed launcher starts Go directly with `--listen 127.0.0.1:PORT` and retains
+its readiness and process-lifetime checks. It uses HTTP to select native OpenAI or
+configured external models per request.
 Select it with `codexx --fanout`; it has a separate `fanout` provider ID and
 `fanout.sock` control socket. `codexx --litellm` keeps its existing LiteLLM route,
 configuration, and runtime. Normal `codexx` and `codexx --openai` continue using the
 native route. Existing profiles and running servers are unchanged.
 
-The managed launcher enables WebSockets for the fanout route. After installing an
-updated binary or changing transport settings, restart its server with
+After installing an updated binary or changing transport settings, restart its server with
 `codexx --fanout app-server daemon restart` and start a new session. The LiteLLM
 route retains its existing HTTP transport.
 
@@ -95,8 +95,10 @@ namespaced tools, freeform custom tools, text, reasoning, usage, and streaming o
 as instructions; they are not enforced by the gateway.
 
 Opaque compaction, encrypted-only reasoning, and unsupported hosted tools fail
-explicitly. Native Responses traffic is forwarded without applying
-those translation restrictions. Model capabilities must reflect the selected provider;
+explicitly. External Chat Completions providers use plaintext collaboration calls;
+OpenAI encrypted task interoperability across providers is not supported. Native
+OpenAI HTTP and WebSocket traffic passes through with upstream-owned history and
+caching; the gateway does not decrypt native content or rewrite its tool schemas. Model capabilities must reflect the selected provider;
 discovering a model ID alone does not establish vision or hosted-tool support.
 
 Client cancellation cancels upstream work. WebSocket `response.create` supports Codex

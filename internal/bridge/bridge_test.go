@@ -439,3 +439,47 @@ func TestLengthWithTruncatedToolNeverExecutes(t *testing.T) {
 		})
 	}
 }
+
+func TestPlaintextCollaborationOutput(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, tc := range []struct{ namespace, name string }{{"collaboration", "spawn_agent"}, {"collaboration", "send_message"}, {"collaboration", "followup_task"}, {"collaboration", "other"}, {"other", "spawn_agent"}} {
+			name := tc.name
+			t.Run(fmt.Sprintf("%s/%s/stream=%v", tc.namespace, name, stream), func(t *testing.T) {
+				h := bridgeFor(t, func(w http.ResponseWriter, r *http.Request) {
+					if stream {
+						chunk(w, delta(obj{"tool_calls": []any{fragment(0, "c", "tool_0", `{"message":"hello"}`)}}, nil))
+						chunk(w, delta(obj{}, "tool_calls"))
+						_, _ = io.WriteString(w, "data: [DONE]\n\n")
+					} else {
+						sendJSON(w, completion(nil, "", []any{chatTool("c", "tool_0", `{"message":"hello"}`)}, "tool_calls"))
+					}
+				})
+				req := request("hi")
+				req["stream"] = stream
+				req["tools"] = []any{obj{"type": "namespace", "name": tc.namespace, "tools": []any{function(name)}}}
+				w := call(t, h, req)
+				if w.Code != 200 {
+					t.Fatal(w.Body.String())
+				}
+				var item obj
+				if stream {
+					events := eventData(t, w.Body.String(), "response.output_item.done")
+					if len(events) != 1 {
+						t.Fatal(w.Body.String())
+					}
+					item = object(events[0]["item"])
+				} else {
+					item = object(array(decode(t, w.Body)["output"])[0])
+				}
+				args, present := item["encrypted_function_args"]
+				if name == "other" || tc.namespace != "collaboration" {
+					if present {
+						t.Fatal(item)
+					}
+				} else if list, ok := args.([]any); !present || !ok || len(list) != 0 {
+					t.Fatal(item)
+				}
+			})
+		}
+	}
+}

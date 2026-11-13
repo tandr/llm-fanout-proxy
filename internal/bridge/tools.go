@@ -156,6 +156,9 @@ func (s *toolSet) output(name, args, callID, id string) (obj, error) {
 	if t.namespace != "" {
 		out["namespace"] = t.namespace
 	}
+	if t.kind == "function" && t.namespace == "collaboration" && (t.name == "spawn_agent" || t.name == "send_message" || t.name == "followup_task") {
+		out["encrypted_function_args"] = []string{}
+	}
 	if t.kind == "custom" {
 		var decoded obj
 		if err := json.Unmarshal([]byte(args), &decoded); err != nil {

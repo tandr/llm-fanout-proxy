@@ -45,7 +45,7 @@ func request(t *testing.T, h http.Handler, method, path, body string) *httptest.
 	return w
 }
 func TestNativePassthrough(t *testing.T) {
-	body := " { \"model\" : \"gpt-test\", \"unknown\": [1, 2] } "
+	body := " { \"model\" : \"gpt-test\", \"previous_response_id\": \"resp_native\", \"unknown\": [1, 2] } "
 	g, _, _ := setup(t, func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		if string(b) != body {
@@ -66,6 +66,9 @@ func TestNativePassthrough(t *testing.T) {
 	w := request(t, g, "POST", codexPath+"/responses?x=1", body)
 	if w.Code != 201 || w.Body.String() != "data: first\n\ndata: second\n\n" {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if g.history.Stats()["entries"] != 0 {
+		t.Fatal("native request entered bridge history")
 	}
 }
 func TestNativeOtherPathAndAlias(t *testing.T) {
