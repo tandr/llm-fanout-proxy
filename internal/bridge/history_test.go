@@ -5,9 +5,74 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestHistoryBranchesDoNotShareItems(t *testing.T) {
+	h := NewHistory()
+	defer h.Close()
+	item := func(s string) any { return obj{"content": s} }
+	h.put("p", "m", "", []any{item("q")}, []any{item("a")})
+	h.put("b1", "m", "p", []any{item("q"), item("a"), item("x1")}, []any{item("y1")})
+	h.put("b2", "m", "p", []any{item("q"), item("a"), item("x2")}, []any{item("y2")})
+	got, ok := h.get("b2", "m")
+	if !ok {
+		t.Fatal("missing branch snapshot")
+	}
+	var order []string
+	for _, value := range got {
+		order = append(order, stringValue(object(value)["content"]))
+	}
+	if strings.Join(order, ",") != "q,a,x2,y2" {
+		t.Fatalf("sibling items leaked into branch: %v", order)
+	}
+}
+
+func TestHistoryOversizedConversationStopsCaching(t *testing.T) {
+	h := NewHistory()
+	defer h.Close()
+	big := strings.Repeat("x", 6<<20)
+	h.put("r1", "m", "", []any{big}, nil)
+	h.put("r2", "m", "r1", []any{big, big}, nil)
+	h.put("r3", "m", "r2", []any{big, big, big}, nil)
+	if _, ok := h.get("r2", "m"); !ok {
+		t.Fatal("resident snapshot lost at the size limit")
+	}
+	if _, ok := h.get("r3", "m"); ok {
+		t.Fatal("oversized conversation cached")
+	}
+	// Recovery sends the full transcript without a parent; it is still too large.
+	h.put("r4", "m", "", []any{big, big, big}, nil)
+	if s := h.Stats(); s["oversized"] != 2 || s["bytes"] > 12<<20+8 {
+		t.Fatalf("unexpected state past the size limit: %v", s)
+	}
+}
+
+func TestHistoryConcurrentAccess(t *testing.T) {
+	h := NewHistory()
+	defer h.Close()
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				id := fmt.Sprintf("g%d-%d", g, i)
+				h.put(id, "m", "", []any{obj{"content": id}}, nil)
+				if _, ok := h.get(id, "m"); !ok {
+					t.Errorf("lost concurrent snapshot %s", id)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	if s := h.Stats(); s["entries"] != 400 || s["hits"] != 400 {
+		t.Fatalf("unexpected counters: %v", s)
+	}
+}
 
 func TestHistorySharesConversationPrefix(t *testing.T) {
 	h := NewHistory()

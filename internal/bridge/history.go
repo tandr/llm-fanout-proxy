@@ -163,7 +163,8 @@ func (h *History) put(id, model, parent string, input, output []any) {
 	conv := &conversation{model: model}
 	delta := input
 	if parent != "" {
-		if entry, ok := h.entries[parent]; ok && entry.conv.model == model && entry.count <= len(input) {
+		// Only extend when the parent is the buffer tip; a fork would otherwise inherit its sibling's items.
+		if entry, ok := h.entries[parent]; ok && entry.conv.model == model && entry.count <= len(input) && entry.end == len(entry.conv.data) {
 			conv = entry.conv
 			delta = input[entry.count:]
 		}
