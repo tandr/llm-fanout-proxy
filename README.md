@@ -80,11 +80,10 @@ Select it with `codexx --fanout`; it has a separate `fanout` provider ID and
 configuration, and runtime. Normal `codexx` and `codexx --openai` continue using the
 native route. Existing profiles and running servers are unchanged.
 
-The managed launcher currently sets `supports_websockets = false` in its shared
-provider configuration. Enabling WebSockets there requires a separate launcher change
-and a new session/server using the updated setting; installing this binary alone does
-not activate that transport. The direct configuration above enables it without changing
-the launcher.
+The managed launcher enables WebSockets for the fanout route. After installing an
+updated binary or changing transport settings, restart its server with
+`codexx --fanout app-server daemon restart` and start a new session. The LiteLLM
+route retains its existing HTTP transport.
 
 ## Translation boundaries
 
