@@ -13,8 +13,8 @@ Requires Go 1.24 or newer.
 cp examples/fanout.yaml ./fanout.yaml
 export FANOUT_API_KEY='a-separate-local-gateway-key'
 export LITHOS_API_KEY='your-provider-key'
-go run ./cmd/fanout -config ./fanout.yaml -check
-go run ./cmd/fanout -config ./fanout.yaml
+go run ./cmd/fanout --config ./fanout.yaml --check
+go run ./cmd/fanout --config ./fanout.yaml
 ```
 
 Keep credentials in the environment. Configuration contains environment variable names,
@@ -73,7 +73,7 @@ the environment; the shell launcher also sources `~/.config/fanout.env` when pre
 Use ordinary shell exports there, such as `export LITHOS_API_KEY='...'`, and keep
 that file mode 0600.
 
-The launcher starts Go directly with `-listen 127.0.0.1:PORT -external-only`, retaining
+The launcher starts Go directly with `--listen 127.0.0.1:PORT --external-only`, retaining
 its existing readiness and process-lifetime checks. This mode discovers only the
 configured external providers and rejects native OpenAI models and endpoints.
 Select it with `codexx --fanout`; it has a separate `fanout` provider ID and
