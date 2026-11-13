@@ -14,7 +14,6 @@ func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 	defer h.Close()
 	now := time.Unix(100, 0)
 	h.now = func() time.Time { return now }
-	h.maxEntries = 2
 	h.put("a", "one/model", []any{obj{"role": "user", "content": "a"}}, nil)
 	now = now.Add(30 * time.Minute)
 	h.put("b", "one/model", nil, []any{obj{"role": "assistant", "content": "b"}})
@@ -31,10 +30,6 @@ func TestHistoryExpiryEvictionAndIsolation(t *testing.T) {
 		t.Fatal("snapshot was mutable")
 	}
 	now = now.Add(31 * time.Minute)
-	h.put("c", "one/model", []any{obj{"role": "user", "content": "c"}}, nil)
-	if _, ok := h.get("b", "one/model"); ok {
-		t.Fatal("least recently used snapshot survived count limit")
-	}
 	if _, ok := h.get("a", "one/model"); !ok {
 		t.Fatal("access did not refresh idle lifetime")
 	}

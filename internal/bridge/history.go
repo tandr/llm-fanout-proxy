@@ -7,8 +7,7 @@ import (
 )
 
 const historyTTL = time.Hour
-const historyEntries = 256
-const historyBytes = 64 << 20
+const historyBytes = 1 << 30
 const snapshotBytes = 16 << 20
 
 type historyEntry struct {
@@ -19,18 +18,18 @@ type historyEntry struct {
 
 // History retains bounded, immutable conversation snapshots; it never writes to disk.
 type History struct {
-	mu                   sync.Mutex
-	entries              map[string]historyEntry
-	bytes                int
-	timer                *time.Timer
-	closed               bool
-	now                  func() time.Time
-	ttl                  time.Duration
-	maxEntries, maxBytes int
+	mu       sync.Mutex
+	entries  map[string]historyEntry
+	bytes    int
+	timer    *time.Timer
+	closed   bool
+	now      func() time.Time
+	ttl      time.Duration
+	maxBytes int
 }
 
 func NewHistory() *History {
-	return &History{entries: make(map[string]historyEntry), now: time.Now, ttl: historyTTL, maxEntries: historyEntries, maxBytes: historyBytes}
+	return &History{entries: make(map[string]historyEntry), now: time.Now, ttl: historyTTL, maxBytes: historyBytes}
 }
 
 func (h *History) Close() {
@@ -117,7 +116,7 @@ func (h *History) put(id, model string, input, output []any) {
 		h.bytes -= len(old.input)
 		delete(h.entries, id)
 	}
-	for len(h.entries) >= h.maxEntries || h.bytes+len(data) > h.maxBytes {
+	for h.bytes+len(data) > h.maxBytes {
 		var oldest string
 		var used time.Time
 		for candidate, entry := range h.entries {

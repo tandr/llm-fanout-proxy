@@ -108,9 +108,9 @@ WebSockets, 64 MiB per message); compression is disabled. Shutdown closes open s
 
 Chat history is process-local memory shared between HTTP and WebSockets, with a
 one-hour idle lifetime per response ID. A timer removes expired entries even without
-new traffic. The shared cache is limited to 256 snapshots and 64 MiB of serialized
-history across all chat providers; each snapshot is limited to 16 MiB. Least recently
-used snapshots are evicted first. Oversized snapshots are not retained. Valid
+new traffic. The shared cache is limited to 1 GiB of serialized history across all
+chat providers; each snapshot is limited to 16 MiB. Least recently used snapshots are
+evicted first. Oversized snapshots are not retained. Valid
 incomplete responses retain only their returned output; failed streams are not cached.
 Each branch has an independent snapshot. Only conversation items carry over: current
 request instructions, tools, and generation settings apply to every request.
