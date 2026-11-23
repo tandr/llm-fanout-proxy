@@ -1,57 +1,36 @@
 # llm-fanout-proxy
 
-A small Go gateway for Codex: native Responses forwarding, on-demand model discovery,
-and Responses-to-Chat-Completions translation for external providers. HTTP and protocol
-handling use the standard library and `github.com/coder/websocket`; YAML parsing uses
-`go.yaml.in/yaml/v3`. Each request selects one upstream; requests are never broadcast.
+A Go proxy that lets Codex use ChatGPT and other model providers in the same session.
+It passes native Responses traffic through and translates Responses to Chat Completions
+for providers that need it.
 
-## Run
+## Run it
 
-Requires Go 1.24 or newer.
+With Go 1.24 or newer:
 
 ```sh
-cp examples/fanout.yaml ./fanout.yaml
-export FANOUT_API_KEY='a-separate-local-gateway-key'
-export LITHOS_API_KEY='your-provider-key'
-go run ./cmd/fanout --config ./fanout.yaml --check
-go run ./cmd/fanout --config ./fanout.yaml
+cp examples/fanout.yaml fanout.yaml
+export FANOUT_API_KEY='replace-with-a-local-gateway-key'
+export LITHOS_API_KEY='replace-with-your-provider-key'
+go run ./cmd/fanout -config fanout.yaml -check
+go run ./cmd/fanout -config fanout.yaml
 ```
 
-Keep credentials in the environment. Configuration contains environment variable names,
-not keys. The file uses a small YAML schema; LiteLLM configuration is not loaded
-directly. The listener defaults to loopback. `/health/readiness` reports readiness;
-`/stats` reports aggregate history-cache counters in JSON.
+The example listens on `127.0.0.1:8765` and uses Lithos as its external provider.
+Edit [the YAML](examples/fanout.yaml) to use a different provider. Keep API keys in
+the environment and put their variable names in `api_key_env`. The gateway key is
+separate from the provider keys.
 
-The gateway accepts the existing Codex paths under `/backend-api/codex` and the
-`x-litellm-api-key` header for local authentication. Native requests retain their
-ChatGPT authentication and account headers; external requests use only their
-configured provider credentials. The gateway key is removed before native forwarding.
+Set the provider's `protocol` to `responses` for passthrough or
+`chat_completions` for translation.
 
-## Routes and discovery
+## Connect Codex
 
-Unprefixed native model names go to the native upstream. `chatgpt/` is a native alias.
-A configured prefix such as `lithos/` selects that provider; the prefix is removed from
-the upstream model name for direct providers. Unknown external prefixes fail explicitly.
-
-Provider protocols:
-
-- `chat_completions`: translate Responses requests and output in Go.
-- `responses`: forward to a native Responses endpoint.
-
-Model catalogs are fetched on demand and merged with the native Codex catalog. Native
-records and instructions are retained. `model_overrides` adds verified context windows
-and reasoning levels without disabling discovery. The first matching pattern wins;
-patterns match upstream IDs without the routing prefix. Put specific patterns first.
-
-## Codex connection
-
-Run the gateway as a separate process, then point a Codex provider at
-`http://127.0.0.1:8765/backend-api/codex`, with `wire_api = "responses"`,
-`supports_websockets = false`, and the gateway header supplied through the environment:
+Add this to your Codex `config.toml`:
 
 ```toml
 [model_providers.fanout]
-name = "Local Go gateway"
+name = "Fanout"
 base_url = "http://127.0.0.1:8765/backend-api/codex"
 wire_api = "responses"
 requires_openai_auth = true
@@ -59,95 +38,54 @@ supports_websockets = false
 env_http_headers = { "x-litellm-api-key" = "FANOUT_API_KEY" }
 ```
 
-Select with `-c 'model_provider="fanout"'` for a new session. Existing sessions can be
-bound to their original provider ID; replacing that provider's endpoint requires
-an explicit configuration change. HTTP routes each request by model; WebSocket
-connections remain pinned to a single upstream.
-Building this repository does not change the installed launcher, start a daemon,
-or activate the gateway.
+From a shell with the same `FANOUT_API_KEY`, start a new session:
 
-`codex` is the standard Codex CLI; `codexx` is our managed local launcher.
-For `codexx`, install with
-`go build -o ~/.local/bin/llm-fanout-proxy ./cmd/fanout` and put the YAML configuration
-at `~/.config/fanout.yaml`. Set its `api_key_env` to `FANOUT_API_KEY`; the
-launcher generates that local key for each launch. Provider credentials come from
-the environment; the shell launcher also sources `~/.config/fanout.env` when present.
-Use ordinary shell exports there, such as `export LITHOS_API_KEY='...'`, and keep
-that file mode 0600.
+```sh
+codex -c 'model_provider="fanout"'
+```
 
-The managed launcher starts Go directly with `--listen 127.0.0.1:PORT` and retains
-its readiness and process-lifetime checks. It uses HTTP to select native OpenAI or
-configured external models per request.
-Select it with `codexx --fanout`; it has a separate `fanout` provider ID and
-`fanout.sock` control socket. `codexx --litellm` keeps its existing LiteLLM route,
-configuration, and runtime. Normal `codexx` and `codexx --openai` continue using the
-native route. Existing profiles and running servers are unchanged.
+### With codexx
 
-After installing an updated binary or changing transport settings, restart its server with
-`codexx --fanout app-server daemon restart` and start a new session. The LiteLLM
-route retains its existing HTTP transport.
+Build the binary with `go build -o ~/.local/bin/llm-fanout-proxy ./cmd/fanout`
+and put the YAML at `~/.config/fanout.yaml`. Keep `api_key_env: FANOUT_API_KEY`
+in the YAML. The launcher generates that key and reads provider exports from
+`~/.config/fanout.env` if present. Use mode `0600` for that file.
 
-## Translation boundaries
+Run `codexx --fanout`. After replacing the binary or changing transport settings,
+run `codexx --fanout app-server daemon restart` and start a new session.
 
-The Chat Completions adapter accepts full-history HTTP requests and incremental
-HTTP/WebSocket requests using `previous_response_id`. It translates function tools,
-namespaced tools, freeform custom tools, text, reasoning, usage, and streaming output. Custom-tool grammars are provided to the model
-as instructions; they are not enforced by the gateway.
+## Model routing
 
-Opaque compaction, encrypted-only reasoning, and unsupported hosted tools fail
-explicitly. External Chat Completions providers use plaintext collaboration calls;
-OpenAI encrypted task interoperability across providers is not supported. Native
-OpenAI HTTP and WebSocket traffic passes through with upstream-owned history and
-caching; the gateway does not decrypt native content or rewrite its tool schemas. Model capabilities must reflect the selected provider;
-discovering a model ID alone does not establish vision or hosted-tool support.
+Unprefixed native model IDs and IDs starting with `chatgpt/` go to ChatGPT.
+An ID starting with a configured prefix like `lithos/` goes to that provider,
+with the prefix stripped. Each request goes to one upstream. HTTP can switch
+upstreams between requests. A WebSocket stays with the upstream selected on
+its first request.
 
-Client cancellation cancels upstream work. WebSocket `response.create` supports Codex
-prewarm (`generate: false`, no model request) and `response.interrupt` with
-`mode: "discard_partial_items"`. Interruption returns an acknowledgment and an
-`interrupted` incomplete response retaining items already delivered as
-`response.output_item.done`; unfinished items are discarded. One request runs at a time
-per chat WebSocket, with at most one queued create. Named `stream_id` multiplexing is
-unsupported by the chat adapter. Connections and messages are bounded (128 concurrent
-WebSockets, 64 MiB per message); compression is disabled. Shutdown closes open sockets.
+The proxy merges the native and external model catalogs on demand. Use
+`model_overrides` to set context windows or reasoning levels for upstream model
+IDs. The first matching pattern wins.
 
-Chat history is process-local memory shared between HTTP and WebSockets, with a
-one-hour idle lifetime per response ID. A timer removes expired entries even without
-new traffic. The shared cache is limited to 1 GiB of serialized history across all
-chat providers. Continued turns append to one buffer per conversation and snapshots
-are prefixes of it, so a transcript is stored once instead of once per response ID;
-the 16 MiB limit applies to that stored conversation. Least recently used snapshots
-are evicted first. Oversized snapshots are not retained. Valid
-incomplete responses retain only their returned output; failed streams are not cached.
-Each branch has an independent snapshot. Only conversation items carry over: current
-request instructions, tools, and generation settings apply to every request.
+## Chat Completions limits
 
-The gateway credential is the local authorization boundary. Cached IDs are random,
-scoped to the exact provider/model, and available to holders of that gateway credential;
-client metadata is not a separate tenant credential. History never writes to disk,
-including for `store: false`; `store: true` persistence remains unsupported by the chat
-adapter. Restart, expiry, and eviction can invalidate IDs. A missing ID returns
-`previous_response_not_found`; recover by sending full input without
-`previous_response_id`. Codex uses that error to retry its full context. The gateway
-never retries failed paid model requests itself.
+The adapter handles streaming, tool calls, and incremental requests. Its
+history cache lives in memory, with a 1 GiB total limit and a 16 MiB limit per
+conversation. Response IDs expire after one hour of inactivity. If the proxy
+returns `previous_response_not_found`, resend the full context without
+`previous_response_id`. Clients that share a gateway key share access to that
+cache.
 
-Native and external Responses WebSockets select an upstream from the first create
-and relay Responses events, including prewarm and interruption, without translation.
-Routing prefixes are removed from each model. A connection cannot change its upstream;
-open another connection when switching providers. External handshakes use only provider
-credentials and allowlisted protocol headers; native handshakes retain native account
-credentials. Native Responses state remains managed by that upstream.
-Valid upstream WebSocket close codes are forwarded with a bounded generic reason,
-including the message-too-large code Codex uses for HTTP fallback.
+External collaboration calls use plaintext. The adapter rejects encrypted-only
+reasoning, opaque compaction, and unsupported hosted tools. It passes custom
+tool grammars to the model as instructions.
 
-Request and response bodies, credentials, and prompts are not logged.
+## Checks
 
-## Verify
+`/health/readiness` checks whether the proxy is up. `/stats` returns history
+cache counters.
 
 ```sh
 go test ./internal/...
 go vet ./...
 go build ./cmd/fanout
 ```
-
-Live-provider compatibility and performance require separate bounded runs; unit tests
-do not establish either.
